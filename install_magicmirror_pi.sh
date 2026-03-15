@@ -20,8 +20,13 @@ CONFIG_PATH=""
 SECRETS_FILE=""
 NON_INTERACTIVE="false"
 
+WITH_TESLAMATE="false"
+TESLAMATE_DIR="${MM_ARTIFACTS_DIR}/teslamate"
+TESLAMATE_TZ="America/Chicago"
+
 DETECTED_PLATFORM=""
 BROWSER_BIN=""
+COMPOSE_CMD=""
 
 log() { echo "[mm-install] $*"; }
 err() { echo "[mm-install][error] $*" >&2; }
@@ -41,6 +46,9 @@ COMMANDS
     --rotation <left|right>  Screen rotation (default: left)
     --base-url <url>         Optional URL where templates are hosted
     --secrets-file <path>    JSON file with secrets to inject post-install
+    --with-teslamate         Install Docker + TeslaMate stack + MMM-TeslaLogger
+    --teslamate-dir <path>   TeslaMate stack directory (default: ~/mm/teslamate)
+    --teslamate-tz <tz>      TeslaMate timezone (default: America/Chicago)
     --non-interactive        Fail instead of prompting (sudo/password-safe mode)
 
   set-secrets
@@ -51,8 +59,8 @@ COMMANDS
     --config <path>          Optional config path (default: ~/MagicMirror/config/config.js)
 
 EXAMPLES
-  bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --platform pi
-  bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --platform linux-pc --non-interactive
+  bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --platform auto
+  bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --with-teslamate --non-interactive
   bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/mm_rtsp.secrets.json
 EOF
 }
@@ -264,6 +272,195 @@ EOF
   pm2 startup systemd -u "$USER" --hp "$HOME" | sed 's/^/[mm-install] /'
 }
 
+# --- TeslaMate / Docker integration ---
+setup_compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+  else
+    err "Docker Compose not found after install."
+    exit 1
+  fi
+}
+
+install_docker_prereqs() {
+  if command -v docker >/dev/null 2>&1; then
+    log "Docker already installed"
+  else
+    log "Installing Docker..."
+    sudo apt-get update -y
+    sudo apt-get install -y docker.io docker-compose-plugin || {
+      log "Apt Docker install failed; using get.docker.com"
+      curl -fsSL https://get.docker.com | sudo sh
+    }
+  fi
+
+  sudo systemctl enable docker || true
+  sudo systemctl start docker || true
+  sudo usermod -aG docker "$USER" || true
+  setup_compose_cmd
+}
+
+rand_hex() {
+  python3 - <<'PY'
+import secrets
+print(secrets.token_hex(16))
+PY
+}
+
+write_teslamate_stack() {
+  mkdir -p "${TESLAMATE_DIR}"
+
+  local db_pass mqtt_pass
+  db_pass="$(rand_hex)"
+  mqtt_pass="$(rand_hex)"
+
+  cat > "${TESLAMATE_DIR}/.env" <<EOF
+TM_TZ=${TESLAMATE_TZ}
+TM_DB_NAME=teslamate
+TM_DB_USER=teslamate
+TM_DB_PASSWORD=${db_pass}
+TM_DB_HOST=database
+TM_ENCRYPTION_KEY=$(rand_hex)
+TM_MQTT_HOST=mosquitto
+TM_MQTT_USERNAME=teslamate
+TM_MQTT_PASSWORD=${mqtt_pass}
+EOF
+
+  cat > "${TESLAMATE_DIR}/docker-compose.yml" <<'EOF'
+services:
+  database:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${TM_DB_USER}
+      POSTGRES_PASSWORD: ${TM_DB_PASSWORD}
+      POSTGRES_DB: ${TM_DB_NAME}
+    volumes:
+      - teslamate-db:/var/lib/postgresql/data
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  teslamate:
+    image: teslamate/teslamate:latest
+    restart: unless-stopped
+    depends_on:
+      - database
+      - mosquitto
+    environment:
+      ENCRYPTION_KEY: ${TM_ENCRYPTION_KEY}
+      DATABASE_USER: ${TM_DB_USER}
+      DATABASE_PASS: ${TM_DB_PASSWORD}
+      DATABASE_NAME: ${TM_DB_NAME}
+      DATABASE_HOST: ${TM_DB_HOST}
+      MQTT_HOST: ${TM_MQTT_HOST}
+      MQTT_USERNAME: ${TM_MQTT_USERNAME}
+      MQTT_PASSWORD: ${TM_MQTT_PASSWORD}
+      TZ: ${TM_TZ}
+    ports:
+      - "4000:4000"
+
+  grafana:
+    image: teslamate/grafana:latest
+    restart: unless-stopped
+    depends_on:
+      - database
+    environment:
+      DATABASE_USER: ${TM_DB_USER}
+      DATABASE_PASS: ${TM_DB_PASSWORD}
+      DATABASE_NAME: ${TM_DB_NAME}
+      DATABASE_HOST: ${TM_DB_HOST}
+    ports:
+      - "3000:3000"
+
+volumes:
+  teslamate-db:
+EOF
+
+  cat > "${TESLAMATE_DIR}/mosquitto.conf" <<'EOF'
+allow_anonymous true
+listener 1883
+EOF
+
+  cat > "${TESLAMATE_DIR}/README.md" <<'EOF'
+# TeslaMate stack
+
+1) Start stack:
+   docker compose up -d
+
+2) Open TeslaMate:
+   http://<host-ip>:4000
+
+3) Add Tesla account via TeslaMate UI (token login flow)
+
+4) MQTT broker available on :1883
+   MagicMirror MMM-TeslaLogger can subscribe to topic `teslamate/cars/1/+`
+
+Grafana:
+- http://<host-ip>:3000
+EOF
+}
+
+start_teslamate_stack() {
+  log "Starting TeslaMate stack in ${TESLAMATE_DIR}"
+  (cd "${TESLAMATE_DIR}" && ${COMPOSE_CMD} up -d)
+}
+
+install_mmm_teslalogger_module() {
+  local modules_dir="${MM_DIR}/modules"
+  mkdir -p "${modules_dir}"
+
+  if [[ ! -d "${modules_dir}/MMM-TeslaLogger/.git" ]]; then
+    git clone https://github.com/spitzlbergerj/MMM-TeslaLogger.git "${modules_dir}/MMM-TeslaLogger"
+  fi
+  (cd "${modules_dir}/MMM-TeslaLogger" && npm install --omit=dev || true)
+}
+
+write_tesla_snippet() {
+  cat > "${MM_ARTIFACTS_DIR}/tesla-module-snippet.js" <<'EOF'
+{
+  module: 'MMM-TeslaLogger',
+  position: 'top_right',
+  header: 'Tesla',
+  config: {
+    mqttServerAddress: '127.0.0.1',
+    mqttServerPort: '1883',
+    mqttTopics: [
+      'Tesla',
+      'teslamate/cars/1/+'
+    ],
+    style: 'lines',
+    displayBattery_level: true,
+    displayState: true,
+    displayCharger_actual_current: true,
+    displayOutside_temp: true,
+    displayInside_temperature: true,
+    displaySentry_mode: true
+  }
+},
+EOF
+}
+
+configure_tesla_stack() {
+  install_docker_prereqs
+  write_teslamate_stack
+  start_teslamate_stack
+  install_mmm_teslalogger_module
+  write_tesla_snippet
+
+  log "TeslaMate + MMM-TeslaLogger installed."
+  log "Complete Tesla auth in browser: http://localhost:4000"
+  log "Then add snippet from ${MM_ARTIFACTS_DIR}/tesla-module-snippet.js into config.js modules array."
+  log "NOTE: log out and back in (or reboot) for docker group membership to apply for non-sudo docker commands."
+}
+
 escape_sed() {
   printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
 }
@@ -325,6 +522,12 @@ Install:
 
 Set secrets after install:
   bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/${MM_TEMPLATE}.secrets.json
+
+TeslaMate (if enabled):
+  Stack dir: ${TESLAMATE_DIR}
+  TeslaMate UI: http://localhost:4000
+  Grafana: http://localhost:3000
+  MQTT: localhost:1883
 EOF
 }
 
@@ -349,6 +552,9 @@ parse_args() {
       --wallpaper-source) WALLPAPER_SOURCE="$2"; shift 2 ;;
       --secrets-file) SECRETS_FILE="$2"; shift 2 ;;
       --config) CONFIG_PATH="$2"; shift 2 ;;
+      --with-teslamate) WITH_TESLAMATE="true"; shift ;;
+      --teslamate-dir) TESLAMATE_DIR="$2"; shift 2 ;;
+      --teslamate-tz) TESLAMATE_TZ="$2"; shift 2 ;;
       --non-interactive) NON_INTERACTIVE="true"; shift ;;
       -h|--help) COMMAND="help"; shift ;;
       *) err "Unknown arg: $1"; usage; exit 1 ;;
@@ -369,6 +575,10 @@ run_install() {
   write_default_configs
   apply_template
   configure_pm2_autostart
+
+  if [[ "$WITH_TESLAMATE" == "true" ]]; then
+    configure_tesla_stack
+  fi
 
   if [[ -n "$SECRETS_FILE" || -n "$OWM_API_KEY" || -n "$CALENDAR_ICS_URL" || -n "$WALLPAPER_SOURCE" ]]; then
     set_secrets
