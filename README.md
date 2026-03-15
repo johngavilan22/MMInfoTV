@@ -4,7 +4,7 @@ MagicMirror Raspberry Pi bootstrap + templates.
 
 ## Quick start (Git clone)
 ```bash
-git clone https://github.com/johngavilan/MMInfoTV.git ~/mm
+git clone https://github.com/johngavilan22/MMInfoTV.git ~/mm
 cp ~/mm/secrets.example.json ~/mm/secrets/mm_rtsp.secrets.json
 # edit secrets file values
 bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --non-interactive --secrets-file ~/mm/secrets/mm_rtsp.secrets.json
@@ -31,3 +31,4 @@ bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/mm_r
 ## Security
 - Do **not** commit real secrets.
 - Keep local secret files under `~/mm/secrets/` (ignored by `.gitignore`).
+.
