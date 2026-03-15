@@ -1,0 +1,64 @@
+/*****************************************************
+ * Magic Mirror                                      *
+ * Custom CSS                                        *
+ *                                                   *
+ * By Michael Teeuw http://michaelteeuw.nl           *
+ * MIT Licensed.                                     *
+ *                                                   *
+ * Add any custom CSS below.                         *
+ * Changes to this files will be ignored by GIT. *
+ *****************************************************/
+
+ body {
+ }
+
+.region.top.bar,
+.region.upper.third,
+.region.middle.center, 
+.region.lower.third {
+  z-index: 10;
+}
+
+.region.lower.third {
+  top: 55% !important;
+  background-color: rgba(0,0,0,.4);
+  margin-left: -60px;
+  padding-left: 60px;
+  padding-right: 60px;
+  padding-bottom: 40px;
+  padding-top: 0px;
+}
+
+.WB-clock
+{
+  padding-bottom: 80px;
+  /*border-bottom: solid 1px;*/
+}
+
+#iw_stream1
+{
+  visibility:hidden;
+}
+
+.calendar .time {
+  text-align: left;
+  color: #ffffff;
+}
+
+.newsfeed-title {
+  font-size: 50px;
+  line-height: 1.2;
+}
+
+.newsfeed-source {
+  visibility: hidden;
+  position: absolute;
+}
+
+.forecast__highlow {
+  font-size: 32px;
+}
+
+.backgroundSlideShow {
+  margin-top: 10px;
+}

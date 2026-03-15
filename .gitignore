@@ -1,0 +1,6 @@
+# local secrets
+secrets/
+*.secrets.json
+
+# macOS
+.DS_Store

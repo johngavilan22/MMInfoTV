@@ -1,0 +1,11 @@
+[
+  {"name":"iFrame","repo":"https://github.com/desertblade/iFrame","commit":"6433215"},
+  {"name":"MMM-auto-refresh","repo":"https://github.com/jasonyork/MMM-auto-refresh.git","commit":"ac478db"},
+  {"name":"MMM-BackgroundSlideshow","repo":"https://github.com/darickc/MMM-BackgroundSlideshow.git","commit":"dcf45c8"},
+  {"name":"MMM-OpenWeatherForecast","repo":"https://github.com/jclarke0000/MMM-OpenWeatherForecast.git","commit":"d47367b"},
+  {"name":"MMM-Remote-Control","repo":"https://github.com/Jopyth/MMM-Remote-Control.git","commit":"2daec30"},
+  {"name":"MMM-RTSPStream","repo":"https://github.com/shbatm/MMM-RTSPStream.git","commit":"e9e3241"},
+  {"name":"MMM-SmartWebDisplay","repo":"https://github.com/AgP42/MMM-SmartWebDisplay.git","commit":"5fcf50f"},
+  {"name":"MMM-Wallpaper","repo":"https://github.com/kolbyjack/MMM-Wallpaper.git","commit":"ecff59a"},
+  {"name":"WallberryTheme","repo":"https://github.com/delightedCrow/WallberryTheme","commit":"65a1c00"}
+]
