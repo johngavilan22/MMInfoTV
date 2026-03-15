@@ -1,19 +1,19 @@
 # MMInfoTV
 
-MagicMirror Raspberry Pi bootstrap + templates.
+MagicMirror bootstrap + templates (supports Raspberry Pi and Linux PC).
 
 ## Quick start (Git clone)
 ```bash
 git clone https://github.com/johngavilan22/MMInfoTV.git ~/mm
 cp ~/mm/secrets.example.json ~/mm/secrets/mm_rtsp.secrets.json
 # edit secrets file values
-bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --non-interactive --secrets-file ~/mm/secrets/mm_rtsp.secrets.json
+bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --platform auto --non-interactive --secrets-file ~/mm/secrets/mm_rtsp.secrets.json
 ```
 
 ## Quick start (curl from GitHub raw)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/johngavilan/MMInfoTV/main/bootstrap.sh | \
-  bash -s -- --template mm_rtsp --non-interactive --base-url https://raw.githubusercontent.com/johngavilan/MMInfoTV/main
+curl -fsSL https://raw.githubusercontent.com/johngavilan22/MMInfoTV/main/bootstrap.sh | \
+  bash -s -- --template mm_rtsp --platform linux-pc --non-interactive --base-url https://raw.githubusercontent.com/johngavilan22/MMInfoTV/main
 ```
 
 ## Set secrets after install
@@ -33,4 +33,3 @@ bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/mm_r
 ## Security
 - Do **not** commit real secrets.
 - Keep local secret files under `~/mm/secrets/` (ignored by `.gitignore`).
-.

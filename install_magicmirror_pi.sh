@@ -10,7 +10,8 @@ NODE_MAJOR="20"
 
 COMMAND="install"
 MM_TEMPLATE="default"
-ROTATION="left"
+PLATFORM="auto"          # auto|pi|linux-pc
+ROTATION="left"          # left|right
 BASE_URL=""
 OWM_API_KEY=""
 CALENDAR_ICS_URL=""
@@ -19,12 +20,15 @@ CONFIG_PATH=""
 SECRETS_FILE=""
 NON_INTERACTIVE="false"
 
+DETECTED_PLATFORM=""
+BROWSER_BIN=""
+
 log() { echo "[mm-install] $*"; }
 err() { echo "[mm-install][error] $*" >&2; }
 
 usage() {
   cat <<'EOF'
-MagicMirror Pi installer
+MagicMirror installer (Pi + Linux PC)
 
 USAGE
   install_magicmirror_pi.sh [install] [options]
@@ -33,6 +37,7 @@ USAGE
 COMMANDS
   install (default)
     --template <name>        Template name (default|mm_rtsp)
+    --platform <auto|pi|linux-pc>
     --rotation <left|right>  Screen rotation (default: left)
     --base-url <url>         Optional URL where templates are hosted
     --secrets-file <path>    JSON file with secrets to inject post-install
@@ -41,14 +46,14 @@ COMMANDS
   set-secrets
     --owm-api-key <key>      OpenWeather API key to inject
     --calendar-url <url>     Private ICS calendar URL to inject
-    --secrets-file <path>    JSON file with keys: owmApiKey, calendarIcsUrl, wallpaperSource
+    --wallpaper-source <src> Wallpaper source (e.g. icloud:...)
+    --secrets-file <path>    JSON keys: owmApiKey, calendarIcsUrl, wallpaperSource
     --config <path>          Optional config path (default: ~/MagicMirror/config/config.js)
 
 EXAMPLES
-  bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp
-  bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --secrets-file ~/mm/secrets/mm_rtsp.secrets.json
+  bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --platform pi
+  bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --platform linux-pc --non-interactive
   bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/mm_rtsp.secrets.json
-  bash ~/mm/install_magicmirror_pi.sh set-secrets --owm-api-key "xxx" --calendar-url "https://...ics" --wallpaper-source "icloud:..."
 EOF
 }
 
@@ -73,13 +78,53 @@ require_sudo() {
   fi
 }
 
+detect_platform() {
+  if [[ "$PLATFORM" != "auto" ]]; then
+    DETECTED_PLATFORM="$PLATFORM"
+    return
+  fi
+
+  local arch model
+  arch="$(uname -m)"
+  model="$(tr -d '\0' </proc/device-tree/model 2>/dev/null || true)"
+
+  if [[ "$arch" == "armv7l" || "$arch" == "aarch64" || "$model" == *"Raspberry Pi"* ]]; then
+    DETECTED_PLATFORM="pi"
+  else
+    DETECTED_PLATFORM="linux-pc"
+  fi
+
+  log "Auto-detected platform: ${DETECTED_PLATFORM}"
+}
+
+resolve_browser_bin() {
+  if command -v chromium-browser >/dev/null 2>&1; then
+    BROWSER_BIN="chromium-browser"
+  elif command -v chromium >/dev/null 2>&1; then
+    BROWSER_BIN="chromium"
+  elif command -v google-chrome >/dev/null 2>&1; then
+    BROWSER_BIN="google-chrome"
+  else
+    BROWSER_BIN="chromium-browser"
+  fi
+  log "Using kiosk browser: ${BROWSER_BIN}"
+}
+
 install_base_packages() {
-  log "Installing system packages..."
+  log "Installing system packages for ${DETECTED_PLATFORM}..."
   sudo apt-get update -y
+
+  local browser_pkg="chromium-browser"
+  if apt-cache show chromium-browser >/dev/null 2>&1; then
+    browser_pkg="chromium-browser"
+  elif apt-cache show chromium >/dev/null 2>&1; then
+    browser_pkg="chromium"
+  fi
+
   sudo apt-get install -y \
     git curl wget ca-certificates jq tar \
     build-essential python3 python3-pip \
-    chromium-browser unclutter x11-xserver-utils
+    "$browser_pkg" unclutter x11-xserver-utils
 }
 
 install_node() {
@@ -203,9 +248,11 @@ configure_pm2_autostart() {
 #!/usr/bin/env bash
 set -e
 export DISPLAY=:0
-xrandr --output HDMI-1 --rotate ${ROTATION} || true
+OUTPUT=\$(xrandr --query 2>/dev/null | awk '/ connected primary/{print \$1; exit}')
+[ -z "\$OUTPUT" ] && OUTPUT=\$(xrandr --query 2>/dev/null | awk '/ connected/{print \$1; exit}')
+xrandr --output "\${OUTPUT:-HDMI-1}" --rotate ${ROTATION} || true
 unclutter -idle 0.5 -root || true
-chromium-browser --kiosk --noerrdialogs --disable-infobars --incognito http://localhost:8080 &
+${BROWSER_BIN} --kiosk --noerrdialogs --disable-infobars --incognito http://localhost:8080 &
 cd "${MM_DIR}"
 node serveronly
 EOF
@@ -225,15 +272,9 @@ load_secrets_file() {
   [[ -z "$SECRETS_FILE" ]] && return 0
   [[ -f "$SECRETS_FILE" ]] || { err "Secrets file not found: $SECRETS_FILE"; exit 1; }
 
-  if [[ -z "$OWM_API_KEY" ]]; then
-    OWM_API_KEY="$(jq -r '.owmApiKey // empty' "$SECRETS_FILE")"
-  fi
-  if [[ -z "$CALENDAR_ICS_URL" ]]; then
-    CALENDAR_ICS_URL="$(jq -r '.calendarIcsUrl // empty' "$SECRETS_FILE")"
-  fi
-  if [[ -z "$WALLPAPER_SOURCE" ]]; then
-    WALLPAPER_SOURCE="$(jq -r '.wallpaperSource // empty' "$SECRETS_FILE")"
-  fi
+  [[ -z "$OWM_API_KEY" ]] && OWM_API_KEY="$(jq -r '.owmApiKey // empty' "$SECRETS_FILE")"
+  [[ -z "$CALENDAR_ICS_URL" ]] && CALENDAR_ICS_URL="$(jq -r '.calendarIcsUrl // empty' "$SECRETS_FILE")"
+  [[ -z "$WALLPAPER_SOURCE" ]] && WALLPAPER_SOURCE="$(jq -r '.wallpaperSource // empty' "$SECRETS_FILE")"
 }
 
 set_secrets() {
@@ -274,12 +315,13 @@ set_secrets() {
 
 write_readme() {
   cat > "${MM_ARTIFACTS_DIR}/README.md" <<EOF
-# MagicMirror Pi Bootstrap Artifacts
+# MagicMirror Bootstrap Artifacts
 
 Template used: ${MM_TEMPLATE}
+Platform: ${DETECTED_PLATFORM}
 
 Install:
-  bash ~/mm/install_magicmirror_pi.sh --template ${MM_TEMPLATE}
+  bash ~/mm/install_magicmirror_pi.sh --template ${MM_TEMPLATE} --platform ${DETECTED_PLATFORM}
 
 Set secrets after install:
   bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/${MM_TEMPLATE}.secrets.json
@@ -299,6 +341,7 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --template) MM_TEMPLATE="$2"; shift 2 ;;
+      --platform) PLATFORM="$2"; shift 2 ;;
       --rotation) ROTATION="$2"; shift 2 ;;
       --base-url) BASE_URL="$2"; shift 2 ;;
       --owm-api-key) OWM_API_KEY="$2"; shift 2 ;;
@@ -316,6 +359,9 @@ parse_args() {
 run_install() {
   enable_noninteractive_env
   require_sudo
+  detect_platform
+  resolve_browser_bin
+
   mkdir -p "${MM_ARTIFACTS_DIR}"
   install_base_packages
   install_node
@@ -324,8 +370,7 @@ run_install() {
   apply_template
   configure_pm2_autostart
 
-  # optional secret injection during install
-  if [[ -n "$SECRETS_FILE" || -n "$OWM_API_KEY" || -n "$CALENDAR_ICS_URL" ]]; then
+  if [[ -n "$SECRETS_FILE" || -n "$OWM_API_KEY" || -n "$CALENDAR_ICS_URL" || -n "$WALLPAPER_SOURCE" ]]; then
     set_secrets
   fi
 
