@@ -14,6 +14,7 @@ ROTATION="left"
 BASE_URL=""
 OWM_API_KEY=""
 CALENDAR_ICS_URL=""
+WALLPAPER_SOURCE=""
 CONFIG_PATH=""
 SECRETS_FILE=""
 NON_INTERACTIVE="false"
@@ -40,14 +41,14 @@ COMMANDS
   set-secrets
     --owm-api-key <key>      OpenWeather API key to inject
     --calendar-url <url>     Private ICS calendar URL to inject
-    --secrets-file <path>    JSON file with keys: owmApiKey, calendarIcsUrl
+    --secrets-file <path>    JSON file with keys: owmApiKey, calendarIcsUrl, wallpaperSource
     --config <path>          Optional config path (default: ~/MagicMirror/config/config.js)
 
 EXAMPLES
   bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp
   bash ~/mm/install_magicmirror_pi.sh --template mm_rtsp --secrets-file ~/mm/secrets/mm_rtsp.secrets.json
   bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/mm_rtsp.secrets.json
-  bash ~/mm/install_magicmirror_pi.sh set-secrets --owm-api-key "xxx" --calendar-url "https://...ics"
+  bash ~/mm/install_magicmirror_pi.sh set-secrets --owm-api-key "xxx" --calendar-url "https://...ics" --wallpaper-source "icloud:..."
 EOF
 }
 
@@ -230,6 +231,9 @@ load_secrets_file() {
   if [[ -z "$CALENDAR_ICS_URL" ]]; then
     CALENDAR_ICS_URL="$(jq -r '.calendarIcsUrl // empty' "$SECRETS_FILE")"
   fi
+  if [[ -z "$WALLPAPER_SOURCE" ]]; then
+    WALLPAPER_SOURCE="$(jq -r '.wallpaperSource // empty' "$SECRETS_FILE")"
+  fi
 }
 
 set_secrets() {
@@ -253,8 +257,15 @@ set_secrets() {
     log "Injected private calendar URL"
   fi
 
-  if [[ -z "$OWM_API_KEY" && -z "$CALENDAR_ICS_URL" ]]; then
-    err "No secrets provided. Use --secrets-file or --owm-api-key/--calendar-url"
+  if [[ -n "$WALLPAPER_SOURCE" ]]; then
+    local wp_esc
+    wp_esc="$(escape_sed "$WALLPAPER_SOURCE")"
+    sed -i.bak "s#__WALLPAPER_SOURCE__#${wp_esc}#g" "$config_path"
+    log "Injected wallpaper source"
+  fi
+
+  if [[ -z "$OWM_API_KEY" && -z "$CALENDAR_ICS_URL" && -z "$WALLPAPER_SOURCE" ]]; then
+    err "No secrets provided. Use --secrets-file or --owm-api-key/--calendar-url/--wallpaper-source"
     exit 1
   fi
 
@@ -292,6 +303,7 @@ parse_args() {
       --base-url) BASE_URL="$2"; shift 2 ;;
       --owm-api-key) OWM_API_KEY="$2"; shift 2 ;;
       --calendar-url) CALENDAR_ICS_URL="$2"; shift 2 ;;
+      --wallpaper-source) WALLPAPER_SOURCE="$2"; shift 2 ;;
       --secrets-file) SECRETS_FILE="$2"; shift 2 ;;
       --config) CONFIG_PATH="$2"; shift 2 ;;
       --non-interactive) NON_INTERACTIVE="true"; shift ;;

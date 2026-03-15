@@ -19,6 +19,8 @@ curl -fsSL https://raw.githubusercontent.com/johngavilan/MMInfoTV/main/bootstrap
 ## Set secrets after install
 ```bash
 bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/mm_rtsp.secrets.json
+# or explicitly:
+# bash ~/mm/install_magicmirror_pi.sh set-secrets --owm-api-key "..." --calendar-url "..." --wallpaper-source "icloud:..."
 ```
 
 ## Repo contents
