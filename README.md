@@ -51,6 +51,12 @@ bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/mm_r
 - `templates/mm_rtsp.tgz` - template tarball for remote fetch mode
 - `secrets.example.json` - sample secret values (safe to commit)
 
+## Boot WiFi behavior
+- On boot, `~/mm/configure-wifi.sh` runs before MagicMirror starts.
+- It loops until internet connectivity is valid.
+- If running interactively (TTY), it prompts for WiFi credentials and attempts setup via `nmcli` or `wpa_cli`.
+- If non-interactive, it keeps retrying every 15 seconds until connected.
+
 ## Security
 - Do **not** commit real secrets.
 - Keep local secret files under `~/mm/secrets/` (ignored by `.gitignore`).

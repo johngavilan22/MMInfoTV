@@ -252,9 +252,70 @@ configure_pm2_autostart() {
   log "Configuring PM2 startup..."
   sudo npm install -g pm2
 
+  cat > "${MM_ARTIFACTS_DIR}/configure-wifi.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+log(){ echo "[mm-wifi] $*"; }
+
+has_internet() {
+  ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1 && return 0
+  curl -fsS --max-time 5 https://www.google.com/generate_204 >/dev/null 2>&1 && return 0
+  return 1
+}
+
+configure_nmcli() {
+  local ssid pass
+  read -r -p "WiFi SSID: " ssid
+  read -r -s -p "WiFi Password: " pass; echo
+  nmcli dev wifi connect "$ssid" password "$pass"
+}
+
+configure_wpa_cli() {
+  local ssid pass
+  read -r -p "WiFi SSID: " ssid
+  read -r -s -p "WiFi Password: " pass; echo
+  sudo tee -a /etc/wpa_supplicant/wpa_supplicant.conf >/dev/null <<EON
+network={
+    ssid="${ssid}"
+    psk="${pass}"
+}
+EON
+  sudo wpa_cli -i wlan0 reconfigure || true
+}
+
+main() {
+  while ! has_internet; do
+    log "No internet yet."
+
+    if [ -t 0 ]; then
+      if command -v nmcli >/dev/null 2>&1; then
+        log "Prompting for WiFi credentials (nmcli)..."
+        configure_nmcli || true
+      elif command -v wpa_cli >/dev/null 2>&1; then
+        log "Prompting for WiFi credentials (wpa_cli)..."
+        configure_wpa_cli || true
+      else
+        log "No WiFi CLI tooling found. Install NetworkManager or wpa_cli."
+      fi
+    else
+      log "Non-interactive boot context detected; retrying in 15s..."
+    fi
+
+    sleep 15
+  done
+
+  log "Internet connectivity established."
+}
+
+main "$@"
+EOF
+  chmod +x "${MM_ARTIFACTS_DIR}/configure-wifi.sh"
+
   cat > "${MM_ARTIFACTS_DIR}/mm-start.sh" <<EOF
 #!/usr/bin/env bash
 set -e
+"${MM_ARTIFACTS_DIR}/configure-wifi.sh"
 export DISPLAY=:0
 OUTPUT=\$(xrandr --query 2>/dev/null | awk '/ connected primary/{print \$1; exit}')
 [ -z "\$OUTPUT" ] && OUTPUT=\$(xrandr --query 2>/dev/null | awk '/ connected/{print \$1; exit}')
