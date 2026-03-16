@@ -51,11 +51,16 @@ bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/mm_r
 - `templates/mm_rtsp.tgz` - template tarball for remote fetch mode
 - `secrets.example.json` - sample secret values (safe to commit)
 
-## Boot WiFi behavior
+## Boot WiFi behavior (captive setup mode)
 - On boot, `~/mm/configure-wifi.sh` runs before MagicMirror starts.
-- It loops until internet connectivity is valid.
-- If running interactively (TTY), it prompts for WiFi credentials and attempts setup via `nmcli` or `wpa_cli`.
-- If non-interactive, it keeps retrying every 15 seconds until connected.
+- If internet is unavailable and `nmcli` is present, device starts temporary AP + setup portal.
+- Screen shows setup portal in kiosk mode.
+- Phone instructions:
+  1. Connect to `MM-Setup-<suffix>`
+  2. Password: `mirror12345`
+  3. Open `http://10.42.0.1:8088`
+- Portal allows SSID selection/entry + password submission.
+- Device loops until valid internet is established, then exits setup mode and starts MagicMirror.
 
 ## Security
 - Do **not** commit real secrets.

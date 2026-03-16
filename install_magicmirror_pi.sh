@@ -252,11 +252,97 @@ configure_pm2_autostart() {
   log "Configuring PM2 startup..."
   sudo npm install -g pm2
 
+  cat > "${MM_ARTIFACTS_DIR}/wifi_portal.py" <<'EOF'
+#!/usr/bin/env python3
+import html
+import os
+import subprocess
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs
+
+PORT = 8088
+
+
+def run(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def list_ssids():
+    r = run(["nmcli", "-t", "-f", "SSID,SIGNAL", "dev", "wifi", "list"])
+    if r.returncode != 0:
+        return []
+    out = []
+    seen = set()
+    for line in r.stdout.splitlines():
+        if not line.strip() or ":" not in line:
+            continue
+        ssid, sig = line.split(":", 1)
+        ssid = ssid.strip()
+        if not ssid or ssid in seen:
+            continue
+        seen.add(ssid)
+        out.append((ssid, sig.strip() or "?"))
+    return out[:30]
+
+
+class H(BaseHTTPRequestHandler):
+    def _send(self, code, body):
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(body.encode("utf-8"))
+
+    def do_GET(self):
+        rows = "".join(
+            f"<option value='{html.escape(s)}'>{html.escape(s)} ({html.escape(sig)}%)</option>"
+            for s, sig in list_ssids()
+        )
+        body = f"""
+<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>MM WiFi Setup</title>
+<style>body{{font-family:Arial;padding:20px;max-width:640px;margin:auto}}input,select{{width:100%;padding:10px;margin:8px 0}}button{{padding:12px 16px}}.note{{color:#555}}</style>
+</head><body>
+<h2>MagicMirror WiFi Setup</h2>
+<p class='note'>Connect your phone to WiFi <b>{html.escape(os.getenv('MM_SETUP_SSID','MM-Setup'))}</b> and open <b>http://10.42.0.1:8088</b>.</p>
+<form method='POST' action='/connect'>
+<label>Choose network</label>
+<select name='ssid'><option value=''>-- Select SSID --</option>{rows}</select>
+<label>Or type SSID</label><input name='ssid_custom' placeholder='Network name'>
+<label>Password</label><input type='password' name='password' placeholder='WiFi password'>
+<button type='submit'>Connect</button>
+</form></body></html>"""
+        self._send(200, body)
+
+    def do_POST(self):
+        if self.path != "/connect":
+            self._send(404, "Not found")
+            return
+        ln = int(self.headers.get("Content-Length", "0"))
+        data = parse_qs(self.rfile.read(ln).decode("utf-8"))
+        ssid = (data.get("ssid_custom", [""])[0] or data.get("ssid", [""])[0]).strip()
+        password = data.get("password", [""])[0]
+        if not ssid:
+            self._send(400, "SSID is required")
+            return
+        r = run(["nmcli", "dev", "wifi", "connect", ssid, "password", password])
+        if r.returncode == 0:
+            self._send(200, "<h3>Connected! You can close this page.</h3>")
+        else:
+            self._send(200, f"<h3>Failed to connect.</h3><pre>{html.escape(r.stderr or r.stdout)}</pre><a href='/'>Back</a>")
+
+
+if __name__ == "__main__":
+    HTTPServer(("0.0.0.0", PORT), H).serve_forever()
+EOF
+  chmod +x "${MM_ARTIFACTS_DIR}/wifi_portal.py"
+
   cat > "${MM_ARTIFACTS_DIR}/configure-wifi.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
 log(){ echo "[mm-wifi] $*"; }
+AP_SSID="MM-Setup-$(hostname | tr -cd '[:alnum:]' | tail -c 5)"
+AP_PASS="mirror12345"
 
 has_internet() {
   ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1 && return 0
@@ -264,44 +350,59 @@ has_internet() {
   return 1
 }
 
-configure_nmcli() {
-  local ssid pass
-  read -r -p "WiFi SSID: " ssid
-  read -r -s -p "WiFi Password: " pass; echo
-  nmcli dev wifi connect "$ssid" password "$pass"
+start_ap_and_portal() {
+  export MM_SETUP_SSID="$AP_SSID"
+  log "Starting setup AP: $AP_SSID"
+  nmcli radio wifi on || true
+  nmcli dev wifi hotspot ifname wlan0 ssid "$AP_SSID" password "$AP_PASS" || nmcli dev wifi hotspot ssid "$AP_SSID" password "$AP_PASS" || true
+  pkill -f wifi_portal.py >/dev/null 2>&1 || true
+  nohup python3 "$(dirname "$0")/wifi_portal.py" >/tmp/mm-wifi-portal.log 2>&1 &
+
+  log "Setup instructions:"
+  log "1) Connect phone to WiFi: $AP_SSID"
+  log "2) Password: $AP_PASS"
+  log "3) Open: http://10.42.0.1:8088"
+
+  if [[ -n "${DISPLAY:-}" ]]; then
+    (${BROWSER_BIN:-chromium-browser} --kiosk --noerrdialogs --disable-infobars http://10.42.0.1:8088 >/dev/null 2>&1 &) || true
+  fi
 }
 
-configure_wpa_cli() {
-  local ssid pass
-  read -r -p "WiFi SSID: " ssid
-  read -r -s -p "WiFi Password: " pass; echo
-  sudo tee -a /etc/wpa_supplicant/wpa_supplicant.conf >/dev/null <<EON
+stop_ap_and_portal() {
+  pkill -f wifi_portal.py >/dev/null 2>&1 || true
+  nmcli con down "$AP_SSID" >/dev/null 2>&1 || true
+}
+
+main() {
+  if has_internet; then
+    log "Internet already available."
+    exit 0
+  fi
+
+  if command -v nmcli >/dev/null 2>&1; then
+    start_ap_and_portal
+    until has_internet; do
+      sleep 10
+    done
+    stop_ap_and_portal
+    log "Internet connectivity established."
+    exit 0
+  fi
+
+  # fallback prompt loop if no nmcli
+  while ! has_internet; do
+    log "No internet and nmcli unavailable."
+    if command -v wpa_cli >/dev/null 2>&1 && [ -t 0 ]; then
+      read -r -p "WiFi SSID: " ssid
+      read -r -s -p "WiFi Password: " pass; echo
+      sudo tee -a /etc/wpa_supplicant/wpa_supplicant.conf >/dev/null <<EON
 network={
     ssid="${ssid}"
     psk="${pass}"
 }
 EON
-  sudo wpa_cli -i wlan0 reconfigure || true
-}
-
-main() {
-  while ! has_internet; do
-    log "No internet yet."
-
-    if [ -t 0 ]; then
-      if command -v nmcli >/dev/null 2>&1; then
-        log "Prompting for WiFi credentials (nmcli)..."
-        configure_nmcli || true
-      elif command -v wpa_cli >/dev/null 2>&1; then
-        log "Prompting for WiFi credentials (wpa_cli)..."
-        configure_wpa_cli || true
-      else
-        log "No WiFi CLI tooling found. Install NetworkManager or wpa_cli."
-      fi
-    else
-      log "Non-interactive boot context detected; retrying in 15s..."
+      sudo wpa_cli -i wlan0 reconfigure || true
     fi
-
     sleep 15
   done
 
@@ -315,8 +416,9 @@ EOF
   cat > "${MM_ARTIFACTS_DIR}/mm-start.sh" <<EOF
 #!/usr/bin/env bash
 set -e
-"${MM_ARTIFACTS_DIR}/configure-wifi.sh"
 export DISPLAY=:0
+export BROWSER_BIN="${BROWSER_BIN}"
+"${MM_ARTIFACTS_DIR}/configure-wifi.sh"
 OUTPUT=\$(xrandr --query 2>/dev/null | awk '/ connected primary/{print \$1; exit}')
 [ -z "\$OUTPUT" ] && OUTPUT=\$(xrandr --query 2>/dev/null | awk '/ connected/{print \$1; exit}')
 xrandr --output "\${OUTPUT:-HDMI-1}" --rotate ${ROTATION} || true
