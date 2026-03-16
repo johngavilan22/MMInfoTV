@@ -57,7 +57,7 @@ bash ~/mm/install_magicmirror_pi.sh set-secrets --secrets-file ~/mm/secrets/mm_r
 - Screen shows setup portal in kiosk mode.
 - Phone instructions:
   1. Connect to `MM-Setup-<suffix>`
-  2. Password: `mirror12345`
+  2. Use the generated password shown on screen/logs (also written to `/tmp/mm-wifi-setup.txt`)
   3. Open `http://10.42.0.1:8088`
 - Portal allows SSID selection/entry + password submission.
 - Device loops until valid internet is established, then exits setup mode and starts MagicMirror.

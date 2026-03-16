@@ -342,7 +342,17 @@ set -euo pipefail
 
 log(){ echo "[mm-wifi] $*"; }
 AP_SSID="MM-Setup-$(hostname | tr -cd '[:alnum:]' | tail -c 5)"
-AP_PASS="mirror12345"
+if command -v sha256sum >/dev/null 2>&1; then
+  AP_PASS="mm$(hostname | sha256sum | awk '{print $1}' | cut -c1-8)"
+elif command -v md5sum >/dev/null 2>&1; then
+  AP_PASS="mm$(hostname | md5sum | awk '{print $1}' | cut -c1-8)"
+else
+  AP_PASS="mm$(python3 - <<'PY'
+import hashlib, socket
+print(hashlib.sha256(socket.gethostname().encode()).hexdigest()[:8])
+PY
+)"
+fi
 
 has_internet() {
   ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1 && return 0
@@ -362,6 +372,7 @@ start_ap_and_portal() {
   log "1) Connect phone to WiFi: $AP_SSID"
   log "2) Password: $AP_PASS"
   log "3) Open: http://10.42.0.1:8088"
+  printf "SSID: %s\nPassword: %s\nPortal: http://10.42.0.1:8088\n" "$AP_SSID" "$AP_PASS" > /tmp/mm-wifi-setup.txt
 
   if [[ -n "${DISPLAY:-}" ]]; then
     (${BROWSER_BIN:-chromium-browser} --kiosk --noerrdialogs --disable-infobars http://10.42.0.1:8088 >/dev/null 2>&1 &) || true
